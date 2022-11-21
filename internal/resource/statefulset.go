@@ -335,7 +335,7 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 	// default pod annotations
 	defaultPodAnnotations := make(map[string]string, 0)
 
-	if builder.Instance.VaultEnabled() {
+	if builder.Instance.VaultEnabled() /*|| builder.Instance.ExternalSecretEnabled()*/ {
 		defaultPodAnnotations = appendVaultAnnotations(defaultPodAnnotations, builder.Instance)
 	}
 
@@ -419,8 +419,10 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 		},
 	}
 
-	if !builder.Instance.VaultDefaultUserSecretEnabled() {
-		appendDefaultUserSecretVolumeProjection(volumes, builder.Instance)
+	if !builder.Instance.VaultDefaultUserSecretEnabled() && !builder.Instance.ExternalSecretEnabled() {
+		appendDefaultUserSecretVolumeProjection(volumes, builder.Instance, DefaultUserSecretName)
+	} else if builder.Instance.ExternalSecretEnabled() {
+		appendDefaultUserSecretVolumeProjection(volumes, builder.Instance, builder.Instance.Spec.SecretBackend.ExternalSecret)
 	}
 
 	if builder.Instance.Spec.Rabbitmq.AdvancedConfig != "" || builder.Instance.Spec.Rabbitmq.EnvConfig != "" {
@@ -472,7 +474,11 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 		},
 	}
 
-	if !builder.Instance.VaultDefaultUserSecretEnabled() {
+	if !builder.Instance.VaultDefaultUserSecretEnabled() && !builder.Instance.ExternalSecretEnabled() {
+		rabbitmqContainerVolumeMounts = append(rabbitmqContainerVolumeMounts, corev1.VolumeMount{
+			Name: "rabbitmq-confd", MountPath: "/etc/rabbitmq/conf.d/11-default_user.conf", SubPath: "default_user.conf",
+		})
+	} else if builder.Instance.ExternalSecretEnabled() {
 		rabbitmqContainerVolumeMounts = append(rabbitmqContainerVolumeMounts, corev1.VolumeMount{
 			Name: "rabbitmq-confd", MountPath: "/etc/rabbitmq/conf.d/11-default_user.conf", SubPath: "default_user.conf",
 		})
@@ -628,15 +634,22 @@ func (builder *StatefulSetBuilder) podTemplateSpec(previousPodAnnotations map[st
 		},
 	}
 	if builder.Instance.VaultDefaultUserSecretEnabled() &&
-		builder.Instance.Spec.SecretBackend.Vault.DefaultUserUpdaterImage != nil &&
-		*builder.Instance.Spec.SecretBackend.Vault.DefaultUserUpdaterImage != "" {
+		builder.Instance.Spec.SecretBackend.DefaultUserUpdaterImage != nil &&
+		*builder.Instance.Spec.SecretBackend.DefaultUserUpdaterImage != "" {
 		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers,
-			defaultUserCredentialUpdater(builder.Instance))
+			defaultUserCredentialUpdater(builder.Instance, false))
+
+	} else if builder.Instance.ExternalSecretEnabled() &&
+		builder.Instance.Spec.SecretBackend.DefaultUserUpdaterImage != nil &&
+		*builder.Instance.Spec.SecretBackend.DefaultUserUpdaterImage != "" {
+		podTemplateSpec.Spec.Containers = append(podTemplateSpec.Spec.Containers,
+			defaultUserCredentialUpdater(builder.Instance, true))
+
 	}
 	return podTemplateSpec
 }
 
-func defaultUserCredentialUpdater(instance *rabbitmqv1beta1.RabbitmqCluster) corev1.Container {
+func defaultUserCredentialUpdater(instance *rabbitmqv1beta1.RabbitmqCluster, cond bool) corev1.Container {
 	managementURI := "http://127.0.0.1:15672"
 	if instance.TLSEnabled() {
 		// RabbitMQ certificate SAN must include this host name.
@@ -656,7 +669,7 @@ func defaultUserCredentialUpdater(instance *rabbitmqv1beta1.RabbitmqCluster) cor
 				"memory": k8sresource.MustParse("512Ki"),
 			},
 		},
-		Image: *instance.Spec.SecretBackend.Vault.DefaultUserUpdaterImage,
+		Image: *instance.Spec.SecretBackend.DefaultUserUpdaterImage,
 		Args: []string{
 			"--management-uri", managementURI,
 			"-v", "4"},
@@ -672,6 +685,14 @@ func defaultUserCredentialUpdater(instance *rabbitmqv1beta1.RabbitmqCluster) cor
 				Name:  "HOSTNAME_DOMAIN",
 				Value: "$(MY_POD_NAME).$(K8S_SERVICE_NAME).$(MY_POD_NAMESPACE)",
 			}),
+	}
+
+	if cond == true {
+		container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
+			Name:      "rabbitmq-confd",
+			MountPath: "/etc/rabbitmq/conf.d/11-default_user.conf",
+			//ReadOnly:  true,
+		})
 	}
 
 	if instance.SecretTLSEnabled() {
@@ -768,6 +789,13 @@ func setupContainer(instance *rabbitmqv1beta1.RabbitmqCluster) corev1.Container 
 	if instance.VaultDefaultUserSecretEnabled() {
 		// Vault annotation automatically mounts the volume
 		setupContainer.Command[2] = fmt.Sprintf(setupContainer.Command[2], "/etc/rabbitmq/conf.d/11-default_user.conf")
+	} else if instance.ExternalSecretEnabled() {
+		setupContainer.Command[2] = fmt.Sprintf(setupContainer.Command[2], "/etc/rabbitmq/conf.d/11-default_user.conf")
+		setupContainer.VolumeMounts = append(setupContainer.VolumeMounts, corev1.VolumeMount{
+			Name:      "rabbitmq-confd",
+			MountPath: "/etc/rabbitmq/conf.d/11-default_user.conf",
+			SubPath:   "default_user.conf",
+		})
 	} else {
 		setupContainer.Command[2] = fmt.Sprintf(setupContainer.Command[2], "/tmp/default_user.conf")
 		setupContainer.VolumeMounts = append(setupContainer.VolumeMounts, corev1.VolumeMount{
@@ -779,7 +807,7 @@ func setupContainer(instance *rabbitmqv1beta1.RabbitmqCluster) corev1.Container 
 	return setupContainer
 }
 
-func appendDefaultUserSecretVolumeProjection(volumes []corev1.Volume, instance *rabbitmqv1beta1.RabbitmqCluster) {
+func appendDefaultUserSecretVolumeProjection(volumes []corev1.Volume, instance *rabbitmqv1beta1.RabbitmqCluster, DefaultUserSecretName string) {
 	for _, value := range volumes {
 		if value.Name == "rabbitmq-confd" {
 			value.VolumeSource.Projected.Sources = append(value.VolumeSource.Projected.Sources,

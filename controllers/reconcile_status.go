@@ -2,10 +2,11 @@ package controllers
 
 import (
 	"context"
+	"reflect"
+
 	rabbitmqv1beta1 "github.com/rabbitmq/cluster-operator/api/v1beta1"
 	"github.com/rabbitmq/cluster-operator/internal/resource"
 	corev1 "k8s.io/api/core/v1"
-	"reflect"
 )
 
 // reconcileStatus sets status.defaultUser (secret and service reference) and status.binding.
@@ -25,7 +26,7 @@ func (r *RabbitmqClusterReconciler) reconcileStatus(ctx context.Context, rmq *ra
 		},
 	}
 
-	if !rmq.VaultDefaultUserSecretEnabled() {
+	if !rmq.VaultDefaultUserSecretEnabled() && !rmq.ExternalSecretEnabled() {
 		defaultUserStatus.SecretReference = &rabbitmqv1beta1.RabbitmqClusterSecretReference{
 			Name:      rmq.ChildResourceName(resource.DefaultUserSecretName),
 			Namespace: rmq.Namespace,

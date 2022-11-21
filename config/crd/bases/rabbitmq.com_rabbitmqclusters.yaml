@@ -4022,6 +4022,11 @@ spec:
                 secretBackend:
                   description: Secret backend configuration for the RabbitmqCluster. Enables to fetch default user credentials and certificates from K8s external secret stores.
                   properties:
+                    defaultUserUpdaterImage:
+                      description: Sidecar container that updates the default user's password in RabbitMQ when it changes in Vault. Additionally, it updates /var/lib/rabbitmq/.rabbitmqadmin.conf (used by rabbitmqadmin CLI). Set to empty string to disable the sidecar container.
+                      type: string
+                    externalSecret:
+                      type: string
                     vault:
                       description: VaultSpec will add Vault annotations (see https://www.vaultproject.io/docs/platform/k8s/injector/annotations) to RabbitMQ Pods. It requires a Vault Agent Sidecar Injector (https://www.vaultproject.io/docs/platform/k8s/injector) to be installed in the K8s cluster. The injector is a K8s Mutation Webhook Controller that alters RabbitMQ Pod specifications (based on the added Vault annotations) to include Vault Agent containers that render Vault secrets to the volume.
                       properties:
@@ -4032,9 +4037,6 @@ spec:
                           type: object
                         defaultUserPath:
                           description: Path in Vault to access a KV (Key-Value) secret with the fields username and password for the default user. For example "secret/data/rabbitmq/config".
-                          type: string
-                        defaultUserUpdaterImage:
-                          description: Sidecar container that updates the default user's password in RabbitMQ when it changes in Vault. Additionally, it updates /var/lib/rabbitmq/.rabbitmqadmin.conf (used by rabbitmqadmin CLI). Set to empty string to disable the sidecar container.
                           type: string
                         role:
                           description: Role in Vault. If vault.defaultUserPath is set, this role must have capability to read the pre-created default user credential in Vault. If vault.tls is set, this role must have capability to create and update certificates in the Vault PKI engine for the domains "<namespace>" and "<namespace>.svc".

@@ -104,7 +104,12 @@ type RabbitmqClusterSpec struct {
 // Future secret backends could be Secrets Store CSI Driver.
 // If not configured, K8s Secrets will be used.
 type SecretBackend struct {
-	Vault *VaultSpec `json:"vault,omitempty"`
+	Vault          *VaultSpec `json:"vault,omitempty"`
+	ExternalSecret string     `json:"externalSecret,omitempty"`
+	// Sidecar container that updates the default user's password in RabbitMQ when it changes in Vault.
+	// Additionally, it updates /var/lib/rabbitmq/.rabbitmqadmin.conf (used by rabbitmqadmin CLI).
+	// Set to empty string to disable the sidecar container.
+	DefaultUserUpdaterImage *string `json:"defaultUserUpdaterImage,omitempty"`
 }
 
 // VaultSpec will add Vault annotations (see https://www.vaultproject.io/docs/platform/k8s/injector/annotations)
@@ -124,11 +129,8 @@ type VaultSpec struct {
 	// Path in Vault to access a KV (Key-Value) secret with the fields username and password for the default user.
 	// For example "secret/data/rabbitmq/config".
 	DefaultUserPath string `json:"defaultUserPath,omitempty"`
-	// Sidecar container that updates the default user's password in RabbitMQ when it changes in Vault.
-	// Additionally, it updates /var/lib/rabbitmq/.rabbitmqadmin.conf (used by rabbitmqadmin CLI).
-	// Set to empty string to disable the sidecar container.
-	DefaultUserUpdaterImage *string      `json:"defaultUserUpdaterImage,omitempty"`
-	TLS                     VaultTLSSpec `json:"tls,omitempty"`
+
+	TLS VaultTLSSpec `json:"tls,omitempty"`
 }
 
 type VaultTLSSpec struct {
@@ -443,8 +445,12 @@ func (cluster *RabbitmqCluster) VaultEnabled() bool {
 	return cluster.Spec.SecretBackend.Vault != nil
 }
 
+func (cluster *RabbitmqCluster) ExternalSecretEnabled() bool {
+	return cluster.Spec.SecretBackend.ExternalSecret != ""
+}
+
 func (cluster *RabbitmqCluster) UsesDefaultUserUpdaterImage() bool {
-	return cluster.VaultEnabled() && cluster.Spec.SecretBackend.Vault.DefaultUserUpdaterImage == nil
+	return (cluster.VaultEnabled() && cluster.Spec.SecretBackend.DefaultUserUpdaterImage == nil) || (cluster.ExternalSecretEnabled() && cluster.Spec.SecretBackend.DefaultUserUpdaterImage == nil)
 }
 
 func (cluster *RabbitmqCluster) VaultDefaultUserSecretEnabled() bool {
